@@ -1,36 +1,61 @@
-# server.py — простой HTTP-сервер для приёма данных
+# server.py
 from aiohttp import web
-import json
 import asyncio
 
-# Хранилище событий (в реальном проекте — база данных)
+# Хранилище событий
 events = []
 lock = asyncio.Lock()
 
-# === Эндпоинт для WebApp ===
+# === Middleware для CORS ===
+@web.middleware
+async def cors_middleware(request, handler):
+    response = await handler(request)
+    response.headers['Access-Control-Allow-Origin'] = 'https://cameri-github-io.onrender.com'
+    response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
+
+# === Обработка OPTIONS (preflight) ===
+async def handle_options(request):
+    return web.Response(
+        headers={
+            'Access-Control-Allow-Origin': 'https://cameri-github-io.onrender.com',
+            'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type'
+        }
+    )
+
+# === Принимаем отчёт ===
 async def report_event(request):
     try:
         data = await request.json()
         async with lock:
-            events.append({
-                "type": data.get("type"),
-                "camera": data.get("camera"),
-                "timestamp": data.get("timestamp"),
-                "user": data.get("user", {})
-            })
-        return web.json_response({"status": "ok"})
+            events.append(data)
+        return web.json_response(
+            {"status": "ok"},
+            headers={'Access-Control-Allow-Origin': 'https://cameri-github-io.onrender.com'}
+        )
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=400)
+        return web.json_response(
+            {"error": str(e)},
+            status=400,
+            headers={'Access-Control-Allow-Origin': 'https://cameri-github-io.onrender.com'}
+        )
 
-# === Эндпоинт для бота (получение новых событий) ===
+# === Отдаём события боту ===
 async def get_events(request):
     async with lock:
         new_events = events.copy()
-        events.clear()  # Очищаем после отправки
-    return web.json_response({"events": new_events})
+        events.clear()
+    return web.json_response(
+        {"events": new_events},
+        headers={'Access-Control-Allow-Origin': 'https://cameri-github-io.onrender.com'}
+    )
 
-# === Запуск сервера ===
-app = web.Application()
+# === Создаём приложение с CORS ===
+app = web.Application(middlewares=[cors_middleware])
+app.router.add_options('/report', handle_options)
+app.router.add_options('/events', handle_options)
 app.router.add_post('/report', report_event)
 app.router.add_get('/events', get_events)
 
